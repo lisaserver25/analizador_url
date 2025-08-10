@@ -3,7 +3,7 @@
 
 # ANALIZADOR DE SISTEMAS Y URLS - Versión para Ubuntu/Linux
 # Creado por Quien sabe?
-# --- Versión con Análisis Completo de URL Única (Gemini) ---
+# --- Versión con Actualización de Dependencias (Gemini) ---
 
 import argparse
 import re
@@ -35,8 +35,12 @@ NORMAL_WORKERS = 15
 LARGE_LIST_WORKERS = 30
 PANEL_SCAN_WORKERS = 25
 
-# --- Verificación e instalación de dependencias ---
-def check_and_install_dependencies():
+# --- INICIO BLOQUE MODIFICADO: Verificación, instalación y actualización de dependencias ---
+def check_and_manage_dependencies():
+    """
+    Verifica si las dependencias están instaladas. Si faltan, las instala (crítico).
+    Luego, intenta actualizar todas las dependencias (no crítico).
+    """
     try:
         subprocess.check_call([sys.executable, "-m", "pip", "--version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except (subprocess.CalledProcessError, FileNotFoundError):
@@ -45,33 +49,49 @@ def check_and_install_dependencies():
             subprocess.check_call(['sudo', 'apt', 'update'])
             subprocess.check_call(['sudo', 'apt', 'install', 'python3-pip', '-y'])
         except (subprocess.CalledProcessError, FileNotFoundError):
-            print(f"{Colors.FAIL}Error: No se pudo instalar 'python3-pip'. Por favor, instálalo manualmente.{Colors.ENDC}"); sys.exit(1)
+            print(f"{Colors.FAIL}Error: No se pudo instalar 'python3-pip'. Por favor, instálalo manualmente.{Colors.ENDC}")
+            sys.exit(1)
 
     required_packages = {
         'requests': 'requests',
         'tqdm': 'tqdm',
         'dnspython': 'dns.resolver',
-        'OpenSSL': 'OpenSSL',
+        'pyOpenSSL': 'OpenSSL',  # El paquete pip se llama pyOpenSSL
         'cryptography': 'cryptography'
     }
+
+    # 1. Instalar dependencias faltantes (crítico para el funcionamiento)
     missing_packages = [pkg for pkg, imp_path in required_packages.items() if importlib.util.find_spec(imp_path) is None]
-
     if missing_packages:
-        print(f"{Colors.WARNING}Advertencia: Faltan dependencias: {', '.join(missing_packages)}{Colors.ENDC}")
+        print(f"{Colors.WARNING}Advertencia: Faltan dependencias críticas: {', '.join(missing_packages)}{Colors.ENDC}")
+        print("Intentando instalar...")
         try:
-            if any(p in missing_packages for p in ['OpenSSL', 'cryptography']):
-                    print("Instalando dependencias de sistema para criptografía (puede pedir contraseña)...")
-                    subprocess.check_call(['sudo', 'apt', 'install', 'build-essential', 'libssl-dev', 'libffi-dev', 'python3-dev', '-y'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if any(p in missing_packages for p in ['pyOpenSSL', 'cryptography']):
+                print("Instalando dependencias de sistema para criptografía (puede pedir contraseña)...")
+                subprocess.check_call(['sudo', 'apt', 'install', 'build-essential', 'libssl-dev', 'libffi-dev', 'python3-dev', '-y'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            
             subprocess.check_call([sys.executable, "-m", "pip", "install", *missing_packages])
-            print(f"{Colors.OKGREEN}✅ Dependencias instaladas correctamente.{Colors.ENDC}")
-            global dns, OpenSSL
-            import dns.resolver
-            import OpenSSL
-        except (subprocess.CalledProcessError, FileNotFoundError) as e:
-            print(f"{Colors.FAIL}Error al instalar dependencias. Por favor, ejecute 'pip3 install {' '.join(missing_packages)}'{Colors.ENDC}"); sys.exit(1)
+            print(f"{Colors.OKGREEN}✅ Dependencias faltantes instaladas correctamente.{Colors.ENDC}")
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            print(f"{Colors.FAIL}Error CRÍTICO: No se pudieron instalar las dependencias básicas. El script no puede continuar.{Colors.ENDC}")
+            sys.exit(1)
 
-check_and_install_dependencies()
+    # 2. Actualizar todas las dependencias (no crítico)
+    print(f"\n{Colors.OKBLUE}Buscando actualizaciones para las dependencias...{Colors.ENDC}")
+    try:
+        all_packages = list(required_packages.keys())
+        # Ocultamos la salida estándar para un inicio más limpio
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", *all_packages], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print(f"{Colors.OKGREEN}✅ Dependencias actualizadas a la última versión.{Colors.ENDC}")
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        print(f"{Colors.WARNING}Advertencia: No se pudieron actualizar las dependencias (puede ser un problema de red).{Colors.ENDC}")
+        print(f"{Colors.WARNING}El script continuará con las versiones actuales.{Colors.ENDC}")
 
+# --- FIN BLOQUE MODIFICADO ---
+
+check_and_manage_dependencies()
+
+# Importaciones globales después de la verificación
 import requests
 import dns.resolver
 import OpenSSL
@@ -197,18 +217,13 @@ def save_report_to_file(title, report_lines, output_file):
         print(f"\n{Colors.OKGREEN}✅ Informe guardado en: {output_file}{Colors.ENDC}")
     except IOError as e: print(f"\n{Colors.FAIL}Error al guardar el informe: {e}{Colors.ENDC}")
 
-# --- INICIO DE BLOQUE NUEVO: ANÁLISIS COMPLETO DE URL ÚNICA ---
+# --- ANÁLISIS COMPLETO DE URL ÚNICA ---
 def full_single_url_analysis():
-    """
-    Realiza un análisis completo y exhaustivo de una única URL, incluyendo búsqueda
-    de origen de Cloudflare y escaneo de paneles.
-    """
     target_url = input(f"\n{Colors.OKCYAN}{Colors.BOLD}Introduce la URL a analizar por completo: {Colors.ENDC}")
     if not target_url:
         print(f"{Colors.FAIL}No se ha introducido una URL.{Colors.ENDC}")
         return
 
-    # Validar y limpiar la URL
     parsed_url = urlparse(target_url)
     if not all([parsed_url.scheme, parsed_url.netloc]):
         print(f"{Colors.FAIL}La URL '{target_url}' no es válida. Asegúrate de que incluya http:// o https://{Colors.ENDC}")
@@ -222,7 +237,6 @@ def full_single_url_analysis():
     ip_details_cache = {}
     ip_to_scan = None
     
-    # 1. Resolución de IP inicial
     try:
         print("1. Obteniendo información de la IP inicial...")
         initial_ip = socket.gethostbyname(target_domain)
@@ -237,7 +251,6 @@ def full_single_url_analysis():
         
         ip_to_scan = initial_ip
 
-        # 2. Detección de Cloudflare y búsqueda de origen
         if 'cloudflare' in isp.lower():
             report_lines.append(f"\n{Colors.WARNING}--- Detección de Cloudflare ---{Colors.ENDC}")
             report_lines.append("  - El dominio parece estar protegido por Cloudflare.")
@@ -251,7 +264,7 @@ def full_single_url_analysis():
                 report_lines.append(f"    └─ {Colors.BOLD}IP Real:{Colors.ENDC} {origin_ip}")
                 report_lines.append(f"    └─ {Colors.BOLD}ISP Real:{Colors.ENDC} {origin_details.get('isp', 'N/A')} ({origin_details.get('country', 'N/A')})")
                 report_lines.append(f"    └─ {Colors.BOLD}Método:{Colors.ENDC} {method}")
-                ip_to_scan = origin_ip # Usaremos la IP real para el escaneo de panel
+                ip_to_scan = origin_ip
             else:
                 report_lines.append(f"  - {Colors.FAIL}{Colors.BOLD}No se pudo encontrar la IP de origen.{Colors.ENDC} El escaneo de panel se realizará en la IP de Cloudflare.")
         else:
@@ -261,7 +274,6 @@ def full_single_url_analysis():
         print(f"{Colors.FAIL}Error fatal: No se pudo resolver el dominio '{target_domain}'.{Colors.ENDC}")
         return
     
-    # 3. Escaneo de paneles
     if ip_to_scan:
         print(f"3. Buscando paneles web en la IP final ({ip_to_scan})...")
         panel_info = find_web_panel(ip_to_scan)
@@ -269,16 +281,12 @@ def full_single_url_analysis():
         report_lines.append(f"  - {Colors.BOLD}IP Escaneada:{Colors.ENDC} {ip_to_scan}")
         report_lines.append(f"  - {Colors.BOLD}Resultado:{Colors.ENDC} {panel_info}")
     
-    # 4. Mostrar informe final
     print_report_to_console(title, report_lines)
     output_file = get_output_filename()
     if output_file:
         save_report_to_file(title, report_lines, output_file)
 
-# --- FIN DE BLOQUE NUEVO ---
-
-
-# --- Herramientas Principales del Menú ---
+# --- Herramientas de Menú Adicionales ---
 def measure_latency():
     target = input(f"\n{Colors.OKCYAN}{Colors.BOLD}Introduce el Dominio o IP a diagnosticar (ej: google.com): {Colors.ENDC}")
     if not target: print(f"{Colors.FAIL}No se ha introducido un objetivo.{Colors.ENDC}"); return
@@ -424,7 +432,7 @@ def convert_from_full_url():
         print(f"{Colors.BOLD}URL de la lista M3U generada:{Colors.ENDC}")
         print(f"{Colors.OKBLUE}{list_url}{Colors.ENDC}")
         print("-" * 40)
-        print("\nAhora puedes copiar esta URL y usarla en la 'Opción 1' para analizar la lista completa.")
+        print("\nAhora puedes copiar esta URL y usarla en la 'Opción 2' (Análisis de Listas) para analizar la lista completa.")
     else:
         print(f"\n{Colors.FAIL}Error: El formato de la URL no es válido.{Colors.ENDC}")
         print("El formato esperado es: http://dominio:puerto/live/USUARIO/CONTRASEÑA/...")
@@ -451,7 +459,7 @@ def build_url_from_data():
     print(f"{Colors.BOLD}URL de la lista M3U generada:{Colors.ENDC}")
     print(f"{Colors.OKBLUE}{list_url}{Colors.ENDC}")
     print("-" * 40)
-    print("\nAhora puedes copiar esta URL y usarla en la 'Opción 1' para analizar la lista completa.")
+    print("\nAhora puedes copiar esta URL y usarla en la 'Opción 2' (Análisis de Listas) para analizar la lista completa.")
 
 def handle_url_conversion():
     """Función principal que gestiona el submenú de conversión de URL."""
@@ -467,10 +475,6 @@ def handle_url_conversion():
         input(f"\n{Colors.OKBLUE}Presiona Enter para volver al menú de conversión...{Colors.ENDC}")
 
 def run_list_analysis(content, source_url=None):
-    """
-    Procesa cualquier contenido de texto, extrayendo URLs vía regex y M3U.
-    Añade la URL de origen al principio de la lista para su análisis prioritario.
-    """
     global analysis_interrupted
     analysis_interrupted = False
     timeouts_count = 0
@@ -657,7 +661,7 @@ def display_main_menu():
     os.system('clear' if os.name == 'posix' else 'cls')
     print("\n" * 2)
     print(f"{Colors.BOLD}{Colors.OKGREEN}======================================================={Colors.ENDC}")
-    print(f"{Colors.BOLD}{Colors.OKGREEN}              ANALIZADOR DE SISTEMAS Y URLS            {Colors.ENDC}")
+    print(f"{Colors.BOLD}{Colors.OKGREEN}             ANALIZADOR DE SISTEMAS Y URLS             {Colors.ENDC}")
     print(f"{Colors.BOLD}{Colors.OKGREEN}======================================================={Colors.ENDC}\n")
     print("--- MENÚ PRINCIPAL ---\n")
     print("Seleccione una opción:\n"
@@ -666,11 +670,11 @@ def display_main_menu():
           f"  {Colors.HEADER}3){Colors.ENDC} Herramienta de Conversión de URL de IPTV\n"
           f"  {Colors.OKCYAN}4){Colors.ENDC} Herramienta de Diagnóstico y Latencia\n"
           f"  {Colors.OKBLUE}5){Colors.ENDC} Análisis Rápido de Servidor y Seguridad\n\n"
-          f"  {Colors.WARNING}6) Salir{Colors.ENDC}")
+          f"  {Colors.WARNING}0) Salir{Colors.ENDC}")
     while True:
-        choice = input(f"\n{Colors.OKCYAN}{Colors.BOLD}Elige una opción (1-6): {Colors.ENDC}");
-        if choice in ['1', '2', '3', '4', '5', '6']: return choice
-        print(f"{Colors.FAIL}Opción no válida. Por favor, introduce un número del 1 al 6.{Colors.ENDC}")
+        choice = input(f"\n{Colors.OKCYAN}{Colors.BOLD}Elige una opción (1-5, 0 para Salir): {Colors.ENDC}");
+        if choice in ['0', '1', '2', '3', '4', '5']: return choice
+        print(f"{Colors.FAIL}Opción no válida. Por favor, introduce un número del 0 al 5.{Colors.ENDC}")
 
 def display_analysis_submenu():
     """Muestra el menú para elegir qué informe generar con los datos en caché."""
@@ -689,10 +693,6 @@ def display_analysis_submenu():
         print(f"{Colors.FAIL}Opción no válida. Por favor, introduce un número del 1 al 5.{Colors.ENDC}")
 
 def handle_list_analysis():
-    """
-    Gestiona el flujo de análisis de listas: carga datos si es necesario
-    y luego muestra el submenú de informes para que el usuario elija.
-    """
     global analysis_cache
     
     if not analysis_cache["is_analyzed"]:
@@ -783,7 +783,10 @@ if __name__ == "__main__":
     while True:
         main_choice = display_main_menu()
         
-        if main_choice == '1':
+        if main_choice == '0':
+            print(f"{Colors.OKBLUE}¡Hasta pronto!{Colors.ENDC}")
+            break
+        elif main_choice == '1':
             full_single_url_analysis()
         elif main_choice == '2':
             handle_list_analysis()
@@ -793,8 +796,5 @@ if __name__ == "__main__":
             measure_latency()
         elif main_choice == '5':
             analyze_server_fast()
-        elif main_choice == '6':
-            print(f"{Colors.OKBLUE}¡Hasta pronto!{Colors.ENDC}")
-            break
             
         input(f"\n{Colors.OKBLUE}Presiona Enter para volver al menú principal...{Colors.ENDC}")
